@@ -1,0 +1,146 @@
+import cv2
+import numpy as np
+
+def calculate_surface_block_ratio(image_path, debug=False):
+    """
+    사진에서 배수구 격자(그레이팅) 구멍을 감지하고,
+    각 구멍 내 쓰레기(어두운 픽셀)를 판별하여
+    표면 막힘 비율(막힌 구멍 수 / 전체 구멍 수)을 계산합니다.
+
+    Parameters:
+    ----------
+    image_path : str
+        분석할 배수구 이미지 파일 경로
+    debug : bool
+        중간 과정(그레이스케일, 이진화, 컨투어 등)을 화면에 출력할지 여부
+
+    Returns:
+    -------
+    surface_block_ratio : float
+        표면 막힘 비율 (0.0 ~ 1.0)
+    hole_count : int
+        전체 구멍 개수
+    blocked_hole_count : int
+        막힌 구멍(쓰레기가 많은 구멍) 개수
+    """
+
+    # 1) 이미지 불러오기
+    img_color = cv2.imread(image_path)
+    if img_color is None:
+        raise FileNotFoundError(f"이미지를 찾을 수 없습니다: {image_path}")
+
+    # 2) 그레이스케일 변환
+    gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY)
+    if debug:
+        cv2.imshow("Grayscale", gray)
+        cv2.waitKey(0)
+
+    # 3) 가우시안 블러로 노이즈 제거
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    if debug:
+        cv2.imshow("Blurred", blurred)
+        cv2.waitKey(0)
+
+    # 4) 이진화: Adaptive Threshold를 사용하여 격자와 배경을 분리
+    #    - 쓰레기 영역은 어두운 부분에 해당하므로, 반전(invert)도 고려
+    binary = cv2.adaptiveThreshold(blurred, 255,
+                                   cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV,
+                                   blockSize=11,
+                                   C=2)
+    if debug:
+        cv2.imshow("Adaptive Binary (Inverted)", binary)
+        cv2.waitKey(0)
+
+    # 5) 모폴로지 연산으로 작은 구멍 연결 해제 및 노이즈 제거
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    clean_binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    if debug:
+        cv2.imshow("Morphology Open", clean_binary)
+        cv2.waitKey(0)
+
+    # 6) 윤곽선(Contours) 검출: 모든 흰색 영역(contours)을 찾음
+    contours, _ = cv2.findContours(clean_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    hole_count = 0
+    blocked_hole_count = 0
+
+    # 7) 각 컨투어(잠재적 구멍)를 검사
+    for cnt in contours:
+        # 7.1) 면적 및 모양으로 구멍 후보 필터링
+        area = cv2.contourArea(cnt)
+        if area < 100 or area > 5000:
+            # 너무 작거나 너무 큰 영역(노이즈 또는 배수구 프레임) 제외
+            continue
+
+        # 7.2) 컨투어를 둘러싼 경계 사각형 구하기
+        x, y, w, h = cv2.boundingRect(cnt)
+
+        # 7.3) 가로/세로 비율로 정사각형 또는 원형 구멍 후보만 남기기
+        aspect_ratio = w / float(h)
+        if aspect_ratio < 0.6 or aspect_ratio > 1.4:
+            # 너무 세로로 길거나 너무 가로로 길면 구멍이 아닐 가능성이 높음
+            continue
+
+        # 7.4) 구멍 후보 영역 마스크 생성
+        hole_mask = np.zeros_like(gray, dtype=np.uint8)
+        cv2.drawContours(hole_mask, [cnt], -1, color=255, thickness=-1)
+
+        # 7.5) 원본 그레이스케일 이미지에서 해당 구멍 영역만 잘라내기
+        hole_region = cv2.bitwise_and(gray, gray, mask=hole_mask)
+
+        # 7.6) 구멍 영역의 픽셀값 분포 확인: 쓰레기로 판단할 어두운 픽셀 비율 계산
+        #      - 구멍 내부의 픽셀 총 개수
+        hole_pixels = hole_region[hole_mask == 255]
+        if hole_pixels.size == 0:
+            continue
+
+        #      - 어두운 픽셀(쓰레기)의 기준: 픽셀 값 < 100 (조명 상태에 따라 조절 가능)
+        dark_threshold = 100
+        dark_pixels = np.sum(hole_pixels < dark_threshold)
+        dark_ratio = dark_pixels / float(hole_pixels.size)
+
+        # 7.7) 구멍 하나를 전체 구멍으로 카운트
+        hole_count += 1
+
+        # 7.8) dark_ratio가 일정 기준 이상이면 '막힌 구멍'으로 판단
+        #      - 예: 어두운 픽셀이 구멍 내부의 ≥ 50% 이상이면 막힌 것으로 분류
+        block_pixel_ratio_threshold = 0.5
+        if dark_ratio >= block_pixel_ratio_threshold:
+            blocked_hole_count += 1
+
+        if debug:
+            # 구멍 테두리 표시 (녹색 테두리)
+            cv2.rectangle(img_color, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(img_color, f"{dark_ratio:.2f}", (x, y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+    # 8) 막힘 비율 계산
+    if hole_count == 0:
+        raise RuntimeError("구멍을 감지하지 못했습니다. 이미지 품질 또는 전처리 알고리즘을 확인하세요.")
+
+    surface_block_ratio = blocked_hole_count / hole_count
+
+    # 9) 디버그용 결과 출력
+    if debug:
+        print(f"총 구멍 개수: {hole_count}")
+        print(f"막힌 구멍 개수: {blocked_hole_count}")
+        print(f"표면 막힘 비율: {surface_block_ratio:.2f}")
+
+        # 감지된 구멍이 표시된 이미지를 창에 띄움
+        cv2.imshow("Detected Holes with Dark Ratios", img_color)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    return surface_block_ratio, hole_count, blocked_hole_count
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 예시 사용법
+if __name__ == "__main__":
+    img_path = "path/to/your/drain_grate_image.jpg"  # 실제 이미지 경로로 변경
+    ratio, total_holes, blocked_holes = calculate_surface_block_ratio(img_path, debug=True)
+    print("===== 최종 결과 =====")
+    print(f"총 구멍 개수    : {total_holes}")
+    print(f"막힌 구멍 개수  : {blocked_holes}")
+    print(f"표면 막힘 비율   : {ratio * 100:.2f}%")
