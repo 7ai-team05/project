@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>배수구 사진 신고</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    h2 {
+      color: #222;
+    }
+    #location {
+      margin: 10px 0;
+    }
+    button {
+      padding: 8px 12px;
+      background-color: #4caf50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>📷 배수구 사진을 촬영해 주세요</h2>
+
+  <!-- 사진 입력 -->
+  <input type="file" accept="image/*" capture="environment" id="photoInput"><br><br>
+
+  <!-- 위치 출력 -->
+  <p id="location">📍 사진 선택 후 위치 정보가 자동으로 갱신됩니다.</p>
+
+  <!-- 전송 버튼 -->
+  <button onclick="upload()">📤 사진 + 위치 전송</button>
+
+  <script>
+    let currentLat = null;
+    let currentLon = null;
+
+    // 사진 선택 시 GPS 위치 재요청
+    document.getElementById('photoInput').addEventListener('change', () => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          currentLat = position.coords.latitude;
+          currentLon = position.coords.longitude;
+          document.getElementById("location").innerText =
+            `📍 위치: ${currentLat}, ${currentLon}`;
+        },
+        (error) => {
+          document.getElementById("location").innerText = "❗ GPS 허용이 필요합니다!";
+        }
+      );
+    });
+
+    // 사진 + GPS 데이터 전송
+    function upload() {
+      const fileInput = document.getElementById('photoInput');
+      const file = fileInput.files[0];
+
+      if (!file) {
+        alert("📸 사진을 먼저 선택해 주세요.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("photo", file);
+      formData.append("latitude", currentLat);
+      formData.append("longitude", currentLon);
+
+      // 여기서 실제 서버 전송 가능
+      console.log("✅ 전송할 데이터:");
+      console.log("사진:", formData.get("photo"));
+      console.log("위도:", formData.get("latitude"));
+      console.log("경도:", formData.get("longitude"));
+
+      alert("📤 전송 완료 (테스트용 출력입니다)");
+    }
+  </script>
+</body>
+</html>
