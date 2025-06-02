@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>배수구 사진 EXIF GPS 추출 (EXIF 전용)</title>
+  <!-- exif-js 라이브러리 로드 -->
+  <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      max-width: 400px;
+      margin: auto;
+    }
+    h2 {
+      color: #222;
+      font-size: 1.2rem;
+      margin-bottom: 1rem;
+    }
+    input[type="file"] {
+      margin-bottom: 1rem;
+    }
+    #location {
+      margin: 1rem 0;
+      color: #555;
+    }
+    button {
+      padding: 8px 12px;
+      background-color: #4caf50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:disabled {
+      background-color: #9e9e9e;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>📷 배수구 사진을 선택해 주세요 (EXIF 전용)</h2>
+
+  <!-- 1) 파일 입력 (사진 업로드) -->
+  <input
+    type="file"
+    accept="image/jpeg, image/jpg"
+    id="photoInput"
+  /><br />
+
+  <!-- 2) EXIF GPS 결과 표시 -->
+  <p id="location">📍 사진 속 GPS 정보를 불러오는 중...</p>
+
+  <!-- 3) (선택) 전송 버튼 -->
+  <button id="sendButton" disabled>📤 사진 정보 전송</button>
+
+  <script>
+    // 전역 변수: 추출된 위도/경도
+    let extractedLat = null;
+    let extractedLon = null;
+
+    // EXIF GPS 좌표를 10진수로 변환하는 함수
+    function convertDMSToDecimal(dmsArray, ref) {
+      // dmsArray 예: [ [deg,1], [min,1], [sec,100] ]
+      const deg = dmsArray[0][0] / dmsArray[0][1];
+      const min = dmsArray[1][0] / dmsArray[1][1];
+      const sec = dmsArray[2][0] / dmsArray[2][1] / 100; 
+      let decimal = deg + (min / 60) + (sec / 3600);
+      if (ref === "S" || ref === "W") {
+        decimal = -decimal;
+      }
+      return decimal;
+    }
+
+    // 파일 입력 이벤트: 사용자가 사진을 선택하면 실행
+    document
+      .getElementById("photoInput")
+      .addEventListener("change", function () {
+        const file = this.files[0];
+        if (!file) {
+          document.getElementById("location").innerText =
+            "❗ 사진 파일을 선택해주세요.";
+          document.getElementById("sendButton").disabled = true;
+          return;
+        }
+
+        // EXIF 데이터 읽기 (exif-js)
+        EXIF.getData(file, function () {
+          // GPS 태그 추출
+          const gpsLat = EXIF.getTag(this, "GPSLatitude");
+          const gpsLatRef = EXIF.getTag(this, "GPSLatitudeRef");
+          const gpsLon = EXIF.getTag(this, "GPSLongitude");
+          const gpsLonRef = EXIF.getTag(this, "GPSLongitudeRef");
+
+          if (
+            gpsLat && gpsLatRef && gpsLon && gpsLonRef &&
+            gpsLat.length === 3 && gpsLon.length === 3
+          ) {
+            // DMS → 10진수
+            extractedLat = convertDMSToDecimal(gpsLat, gpsLatRef);
+            extractedLon = convertDMSToDecimal(gpsLon, gpsLonRef);
+
+            document.getElementById("location").innerText =
+              `📍 사진 속 위치: ${extractedLat.toFixed(
+                6
+              )}, ${extractedLon.toFixed(6)}`;
+            document.getElementById("sendButton").disabled = false;
+          } else {
+            // EXIF에 GPS 정보가 없을 때
+            document.getElementById("location").innerText =
+              "⚠️ 사진에 GPS 정보가 없습니다. 위치 태그를 확인하세요.";
+            extractedLat = null;
+            extractedLon = null;
+            document.getElementById("sendButton").disabled = true;
+          }
+        });
+      });
+
+    // (선택) 전송 버튼 클릭 시 동작
+    document
+      .getElementById("sendButton")
+      .addEventListener("click", function () {
+        const fileInput = document.getElementById("photoInput");
+        const file = fileInput.files[0];
+        if (!file || extractedLat === null || extractedLon === null) {
+          alert("📸 올바른 사진과 위치 정보가 필요합니다.");
+          return;
+        }
+
+        // FormData에 사진 + 위치 데이터 추가
+        const formData = new FormData();
+        formData.append("photo", file);
+        formData.append("latitude", extractedLat);
+        formData.append("longitude", extractedLon);
+
+        // 예시: 콘솔에 출력 (원하는 서버로 POST 요청 코드로 수정)
+        console.log("✅ 전송할 데이터:");
+        console.log("사진:", formData.get("photo"));
+        console.log("위도:", formData.get("latitude"));
+        console.log("경도:", formData.get("longitude"));
+
+        alert("📤 전송 완료 (EXIF 기반)");
+      });
+  </script>
+</body>
+</html>
