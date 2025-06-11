@@ -1,30 +1,24 @@
 import gradio as gr
-import cv2
-import torch
+import folium
 import io
 import os
 import requests
-import smtplib
 import numpy as np
 import pandas as pd
-import re
-import folium
 import PIL.Image
-from email.header import Header
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
-from email.mime.multipart import MIMEMultipart
-from email.utils import formatdate
-from gradio_modal import Modal
+from PIL import ImageDraw
+from gradio_image_annotation import image_annotator
 from PIL.ExifTags import TAGS
-from geopy.geocoders import Nominatim
+from azure.cognitiveservices.vision.customvision.prediction import CustomVisionPredictionClient
+from msrest.authentication import ApiKeyCredentials
+
 
 
 # 이미지 처리
 def process_image(image_path) :
     # 이미지가 삭제된 경우, 모든 셋팅 초기화
     if image_path is None :
-        return '', gr.update(visible=False), gr.update(visible=False), image_path, gr.update(visible=False), (37.566535, 126.9779692), 0, 0
+        return '', gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
     # 이미지 빗물받이 여부 판단
     service_or_not_label, service_or_not_probability = predict_with_api(image_path)
@@ -33,83 +27,22 @@ def process_image(image_path) :
 
     # 빗물받이가 아닌 경우,
     if not is_valid :
-        return validation_msg, gr.update(visible=False), gr.update(visible=False), image_path, gr.update(visible=False), (37.566535, 126.9779692), 0, 0
+        return validation_msg, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
     
     # 빗물받이인 경우,
     # 1. 심각도 예측    
-    # severity_label, severity_probability = predict_with_api(image_path, 'severity')
-    # print(pred_severity)
-    severity_probability = 0
-
-    # 2. 예측 결과를 바탕으로 깊이 고려하여 점수 환산
-    # 깊이 고려 가중치
-    depth = midas(image_path)
-    avg_depth = np.mean(depth)
-    # print(avg_depth)
-
-    # 점수 계산
-    total_score = 0
-
-    # 30점 이하 : 깨끗
-    # 30점 초과 ~ 70점 미만 : 주의 요망
-    # 70점 이상 : 위험
-    if total_score <= 30 :
-        warning_msg = '🟢 깨끗'
-    elif total_score >= 70 :
-        warning_msg = '🔴 위험'
-    else :
-        warning_msg = '🟡 주의 요망'
+    severity_label, severity_probability = predict_with_api(image_path, 'severity')
+    is_clean = severity_label == 'clean'
+    result_msg = f'🟢 깨끗 ({(severity_probability * 100) :.0f}%)' if is_clean else f'🟡 주의 요망 ({severity_label} : {(severity_probability * 100) :.0f}%)'
     
-    # 3. GPS 정보 추출
+    # 2. GPS 정보 추출
     gps = get_image_gps(image_path)
     # 서울 중심
     map = folium.Map(location=[37.566535, 126.9779692], zoom_start=11)
     folium.Marker(location=[gps[0], gps[1]], icon=folium.Icon(color='red', icon='star')).add_to(map)
     map_html = map._repr_html_()
 
-    return validation_msg, gr.update(value=warning_msg, visible=True), gr.update(value=map_html, visible=True), image_path, gr.update(visible=True), gps, severity_probability, total_score
-
-
-# 업로드 이미지 상대적 깊이 추출
-def midas(image_path) :
-    # PIL 이미지를 OpenCV 이미지로 변환
-    image = PIL.Image.open(image_path)
-    pil_img = np.array(image)
-    img = cv2.cvtColor(pil_img, cv2.COLOR_BGR2RGB)
-
-    # MiDaS 모델 가져오기
-    model_type = 'DPT_Large'
-    midas = torch.hub.load('intel-isl/MiDas', model_type)
-
-    # GPU 사용 가능하다면 GPU 사용
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    midas.to(device)
-    midas.eval()
-
-    # 모델 tranform 객체 가져오기
-    midas_transforms = torch.hub.load('intel-isl/MiDas', 'transforms')
-    if model_type == 'DPT_Large' or model_type == 'DPT_Hybrid' :
-        transform = midas_transforms.dpt_transform
-    else :
-        transform = midas_transforms.small_transform
-
-    # 모델 tranform
-    input_batch = transform(img).to(device)
-
-    with torch.no_grad() :
-        # 예측
-        prediction = midas(input_batch)
-        # 크기 변경
-        prediction = torch.nn.functional.interpolate(
-            prediction.unsqueeze(1),
-            size=img.shape[:2],
-            mode='bicubic',
-            align_corners=False
-        ).squeeze()
-
-        # 결과
-        result = prediction.cpu().numpy()
-    return result
+    return validation_msg, gr.update(value=result_msg, visible=True), gr.update(value=map_html, visible=True), gr.update(visible=True)
 
 
 # 이미지 위치 정보
@@ -154,41 +87,19 @@ def get_image_gps(image_path) :
     return lat, lon
 
 
-# 이미지 위치 정보(위도, 경도) -> 주소로 변환
-def gps_to_address(lat, lon) :
-    geolocator = Nominatim(user_agent='South Korea')
-    address = geolocator.reverse([lat, lon], exactly_one=True, language='ko')
-    detail_address = address.address
-
-    return detail_address
-
-
-# PIL 이미지 객체 -> JPEG 형식의 바이너리 데이터로 변환
-def pil_to_binary(image_path, resize=False) :
-    image = PIL.Image.open(image_path)
-    buf = io.BytesIO()
-
-    # 리사이즈가 필요한 경우,
-    if resize : 
-        image = image.resize((800, 600))
-
-    image.save(buf, format='JPEG')
-    byte_data = buf.getvalue()
-
-    return byte_data
-
-
 # 학습 모델 결과 반환
 def predict_with_api(image_path, type='service_or_not') :
     # Custom Vision Predictioin 정보
     PREDICTION_KEY = {
         'service_or_not' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
-        'severity' : ''
+        'severity' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
+        'object_detect' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC'
     }
         
     ENDPOINT_URL = {
         'service_or_not' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/58b52583-2cfb-4767-b9e0-8e83032f9d95/classify/iterations/Iteration3/image',
-        'severity' : ''
+        'severity' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/ab4cf356-d250-44f4-9221-12c8560bbee1/classify/iterations/Iteration9/image',
+        'object_detect' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/3e17ba3a-0a1e-44a6-8c7d-237db4c93280/detect/iterations/Iteration1/url'
     }
 
     # API 호출 시, 사용할 헤더 셋팅
@@ -213,168 +124,157 @@ def predict_with_api(image_path, type='service_or_not') :
     return label, probability
 
 
-# 이메일 전송
-def send_email(content, image_path) :
-    smtp_info = {
-        'gmail.com' : ('smtp.gmail.com', 587),
-        'naver.com' : ('smtp.naver.com', 587)
-    }
+# PIL 이미지 객체 -> JPEG 형식의 바이너리 데이터로 변환
+def pil_to_binary(image_path) :
+    image = PIL.Image.open(image_path)
+    buf = io.BytesIO()
+    image.save(buf, format='JPEG')
+    byte_data = buf.getvalue()
 
-    # 메일 서버, 포트
-    smtp_server, port = smtp_info['naver.com']
-    mail_server = smtplib.SMTP(smtp_server, port)
-    mail_server.starttls()
-    mail_server.login('이메일 계정', '이메일 계정 비밀번호')
+    return byte_data
 
-    # 메일 내용
-    msg = MIMEMultipart()
-    msg['From'] = '이메일 계정'
-    msg['To'] = '이메일 계정'
-    msg['Date'] = formatdate(localtime=True)
-    msg['Subject'] = Header('빗물받이 신고 내역'.encode('utf-8'), 'utf-8')
-    msg_html = MIMEText(f'<html><body>{content}<br><img src="cid:image1"></body></html>', 'html')
-    msg.attach(msg_html)
-    
+
+
+def detect_image(image_path) :
+    # Custom Vision Predictioin 정보
+    ENDPOINT_URL = 'https://7aiteam05cv-prediction.cognitiveservices.azure.com'
+    PREDICTION_KEY = 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC'
+    PROJECT_ID = '3e17ba3a-0a1e-44a6-8c7d-237db4c93280'
+    PUBLISHED_NAME = 'Iteration1'
+
+    # Prediction 클라이언트 생성
+    credentials = ApiKeyCredentials(in_headers={'Prediction-Key' : PREDICTION_KEY})
+    predictor = CustomVisionPredictionClient(endpoint=ENDPOINT_URL, credentials=credentials)
+
     # 전송할 이미지 (바이너리 형태)
-    byte_data = pil_to_binary(image_path, True)
-    msg_image = MIMEImage(byte_data, name=image_path)
-    msg_image.add_header('Content-ID', '<image1>')
-    msg.attach(msg_image)
-
-    # 메일 전송
-    mail_server.sendmail(msg['From'], msg['To'], msg.as_string())
-    mail_server.quit()
-
-
-# 신고 접수
-def submit_form(mobile, privacy, image, gps, pred_severity, total_score) :
-    # print(mobile, privacy, gps, pred_severity, total_score)
-    lat, lon = gps
-
-    result_msg = ''
-    error_msg = ''
-
-    # 개인정보 이용내역 동의 시에만 전송
-    if not privacy :
-        error_msg = '개인정보(휴대전화) 이용에 동의를 해야 접수가 가능합니다.'
-        return gr.update(value=error_msg, visible=True), gr.update(visible=True), gr.update(), gr.update()
+    byte_data = pil_to_binary(image_path)
+    image = PIL.Image.open(image_path)
     
-    # 개인정보 이용내역 동의 시에만 전송
-    if not mobile :
-        error_msg = '휴대전화 정보를 입력해주세요.'
-        return gr.update(value=error_msg, visible=True), gr.update(visible=True), gr.update(), gr.update()
-    
-    # 휴대전화 번호 유효성 검사 (추후 인증번호 수신 모듈 연결하는걸로 확장)
-    pattern = r'\d{3}-\d{3,4}-\d{4}'
-    if not re.match(pattern, mobile) :
-        error_msg = '휴대전화 정보를 올바른 형식(예: 010-1234-5678)으로 입력해주세요.'
-        return gr.update(value=error_msg, visible=True), gr.update(visible=True), gr.update(), gr.update()
-    
-    # csv 파일 가져오기 (없으면 새로 생성)
-    file_path = 'reportDB.csv'
-    df = pd.read_csv(file_path) if os.path.exists(file_path) else pd.DataFrame()
+    # 이미지 전송 및 예측
+    results = predictor.detect_image(PROJECT_ID, PUBLISHED_NAME, byte_data)
 
-    # 신규 데이터 저장
-    data = {
-        'mobile' : mobile,
-        'lat' : lat,
-        'lon' : lon,
-        'pred_severity' : pred_severity,
-        'total_score' : total_score
+    colors = {
+        'cigarette' : (255, 0, 0),
+        'plastic waste' : (0, 0, 255),
+        'paper waste' : (0, 255, 0),
+        'natural object' : (255, 0, 255),
+        'other trash' : (0, 0, 0)
     }
-    new_row = pd.DataFrame([data])
-    df = pd.concat([df, new_row], ignore_index=True)
+    
+    boxes = []
+    for prediction in results.predictions :
+        if prediction.probability > 0.5 :
+            left = int(prediction.bounding_box.left * image.width)
+            top = int(prediction.bounding_box.top * image.height)
+            width = int(prediction.bounding_box.width * image.width)
+            height = int(prediction.bounding_box.height * image.height)
+            label = prediction.tag_name
+
+            boxes.append({
+                'xmin' : left,
+                'ymin' : top,
+                'xmax' : width,
+                'ymax' : height,
+                'label' : label,
+                'color' : colors[label]
+            })
+    
+    dict = {
+        'image' : np.array(image),
+        'boxes' : boxes
+    }
+    print(dict)
+    
+    return dict
+
+
+def add_new_object(annotations) :
+    # csv 파일 가져오기 (없으면 새로 생성)
+    file_path = 'object_detection.csv'
+    df = pd.read_csv(file_path) if os.path.exists(file_path) else pd.DataFrame()
+    
+    boxes = []
+    if annotations['boxes'] :    
+        for box in annotations['boxes'] :
+            # 신규 데이터 저장
+            boxes.append({
+                'xmin' : box['xmin'],
+                'ymin' : box['ymin'],
+                'xmax' : box['xmax'],
+                'ymax' : box['ymax'],
+                'label' : box['label'],
+                'color' : box['color']
+            })   
+
+        dict = {
+            'image' : PIL.Image.fromarray(annotations['image']),
+            'boxes' : boxes
+        }
+            
+        new_row = pd.DataFrame(dict)
+        df = pd.concat([df, new_row], ignore_index=True)
+        result_msg = '새로운 개체 추가 완료'
 
     # 기존 csv 파일 덮어쓰기
-    df.to_csv('reportDB.csv', index=False)
+    df.to_csv(file_path, index=False)
 
-    result_msg = '접수가 완료되었습니다.'
+    return gr.update(value=result_msg, visible=True)
 
-    # 주소 조회
-    # address = gps_to_address(lat, lon)
-
-    # 이메일 전송
-    content = f"<h3>빗물받이 신고 내역입니다.</h3>\
-    <p>- ✅ 심각도 : {pred_severity}</p>\
-    <p>- ✅ 점수 : {total_score}</p>"
-    send_email(content, image)
-    
-    return gr.update(value=result_msg, visible=True), gr.update(visible=False), gr.update(value=''), gr.update(value=False)
 
 # 화면 UI
 with gr.Blocks() as demo :
     gr.Markdown('## 🚧 격자형 빗물받이에 특화된 시범 서비스입니다.')
 
-    # global 변수
-    # 이미지 경로
-    img_path = gr.State()
-    # 위치 정보
-    gps_state = gr.State()
-    # 예측 확률
-    pred_severity_state = gr.State()
-    # 깊이 고려 환산 점수
-    total_score_state = gr.State()
-
     with gr.Tabs() :
-        # 사용자 이미지 업로드
+        # 분류 (clean/heavy)
         with gr.Tab('📸') :
             # 이미지 메타정보를 사용하기 위해서 type='filepath' 로 지정
             image_input = gr.Image(type='filepath', label='사진을 올려주세요.')
             validation = gr.Textbox(label='이미지 확인')
             prediction = gr.Textbox(label='오염 심각도 확인', visible=False)
             map = gr.HTML(visible=False)
-            apply_btn = gr.Button('신고 접수', visible=False)
+            apply_btn = gr.Button('안전신문고로 신고하러 가기', visible=False)
+            output = gr.HTML()
 
             # 이미지 업로드
             image_input.change(
                 fn=process_image,
                 inputs=image_input,
-                outputs=[validation, prediction, map, img_path, apply_btn, gps_state, pred_severity_state, total_score_state]
+                outputs=[validation, prediction, map, apply_btn]
             )
 
-            # 신고 접수 접수창
-            with Modal(visible=False) as report_form :
-                mobile_input = gr.Textbox(label='휴대전화 (예: 010-1234-5678)')
-                privacy_chk = gr.Checkbox(label='개인정보(휴대전화 번호) 이용 동의')
-                gr.Markdown('#### 서비스 이용 시, 수집하는 개인정보(휴대전화 번호)는 신고접수 서비스를 하기 위함입니다. 사용자의 개인정보는 이용목적 달성 시, 지체없이 파기합니다.')
-                modal_alert = gr.Textbox(visible=False, label='알림')
-                submit_btn = gr.Button('제출')
-
-            # 신고 접수 버튼 클릭 시,
+            # 안전신문고 신고
             apply_btn.click(
-                fn=lambda: [gr.update(visible=True), gr.update(visible=False, value='')],
-                outputs=[report_form, modal_alert]
+                fn=lambda: '<script>window.open("https://www.safetyreport.go.kr", "_blank");</script>',
+                outputs=output
             )
 
-            # 제출 버튼 클릭 시,
-            submit_btn.click(
-                fn=submit_form,
-                inputs=[mobile_input, privacy_chk, img_path, gps_state, pred_severity_state, total_score_state],
-                outputs=[modal_alert, report_form, mobile_input, privacy_chk]
+        # 개체 감지
+        with gr.Tab('🔎') :
+            # 이미지 업로드
+            image_input = gr.Image(type='filepath', label='사진을 올려주세요.')
+            detect_btn = gr.Button('개체 감지')
+        
+            # 개체 감지 내역 노출용 이미지
+            annotator = image_annotator(
+                label_list=['cigarette', 'plastic waste', 'paper waste', 'natural object', 'other trash'],
+                label_colors=[(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 0, 255), (0, 0, 0)],
             )
-
-        # 신고 접수현황 - 스쿨어택
-        with gr.Tab('🏫') :
-            # school_df = pd.read_csv('')
-            school_df = pd.DataFrame({
-                '학교명' : ['A 초등학교', 'B 초등학교', 'C 초등학교', 'D 초등학교', 'E 초등학교'],
-                '신고건수' : [10, 5, 2, 23, 1]
-            })
-
-            # 데이터 가공
-            school_df = school_df.sort_values(by='신고건수', ascending=False)
-            school_df = school_df.reset_index(drop=True)
-
-            # 1~3순위 표시
-            medals = ['🥇', '🥈', '🥉']
-            for i in range(3) :
-                school_df.loc[i, '학교명'] = f'{medals[i]} {school_df.loc[i, "학교명"]}'
+            save_btn = gr.Button('새로운 개체 추가')
+            result = gr.Textbox(label='알림', visible=False)
             
-            gr.DataFrame(value=school_df)
-        # 신고 접수현황 - 공무원 대상
-        with gr.Tab('📋') :
-            # report_df = pd.read_csv('')
-            report_df = pd.DataFrame({})
-            gr.DataFrame(value=report_df)
+            # 개체 감지 결과 노출
+            detect_btn.click(
+                fn=detect_image,
+                inputs=[image_input],
+                outputs=[annotator]
+            )
+
+            # 새로운 개체 추가
+            save_btn.click(
+                fn=add_new_object,
+                inputs=[annotator],
+                outputs=[result]
+            )
 
 demo.launch()
