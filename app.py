@@ -18,12 +18,26 @@ from msrest.authentication import ApiKeyCredentials
 
 
 #──────────────────────────────────────────────────────────────
+# UI 요소 숨기기
+#──────────────────────────────────────────────────────────────
+def hide_components(n) :
+    return [gr.update(visible=False)] * n
+
+
+#──────────────────────────────────────────────────────────────
+# UI 요소 보이기
+#──────────────────────────────────────────────────────────────
+def show_components(*components) :
+    return [gr.update(visible=True) for _ in components]
+
+
+#──────────────────────────────────────────────────────────────
 # 이미지 처리
 #──────────────────────────────────────────────────────────────
 def process_image(image_path) :
     # 이미지가 삭제된 경우, 모든 셋팅 초기화
     if image_path is None :
-        return '', gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        return '', *hide_components(10)
 
     # 이미지 빗물받이 여부 판단
     service_or_not_label, service_or_not_probability = predict_with_api(image_path)
@@ -32,7 +46,7 @@ def process_image(image_path) :
 
     # 빗물받이가 아닌 경우,
     if not is_valid :
-        return validation_msg, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        return validation_msg, *hide_components(10)
     
     # 빗물받이인 경우, 오염도 예측    
     severity_label, severity_probability = predict_with_api(image_path, 'severity')
@@ -46,27 +60,30 @@ def process_image(image_path) :
         </a>
     '''
 
-    return validation_msg, gr.update(value=result_msg, visible=True), gr.update(value=report_btn, visible=False), gr.update(visible=False) if is_clean else gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+    return validation_msg, gr.update(value=result_msg, visible=True), gr.update(value=report_btn, visible=False), gr.update(visible=False) if is_clean else gr.update(visible=True), *hide_components(7)
 
 
 #──────────────────────────────────────────────────────────────
 # 학습 모델 결과 반환
 #──────────────────────────────────────────────────────────────
 def predict_with_api(image_path, type='service_or_not') :
-    # Custom Vision Predictioin 정보
-    PREDICTION_KEY = {
-        'service_or_not' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
-        'severity' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
+    # Azure Custom Vision API 연결 정보
+    PREDICTION_CONFIG = {
+        'service_or_not' : {
+            'key' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
+            'url' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/58b52583-2cfb-4767-b9e0-8e83032f9d95/classify/iterations/Iteration3/image',
+        },
+        'severity' : {
+            'key' : 'BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC',
+            'url' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/ab4cf356-d250-44f4-9221-12c8560bbee1/classify/iterations/Iteration9/image',
+        }
     }
-        
-    ENDPOINT_URL = {
-        'service_or_not' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/58b52583-2cfb-4767-b9e0-8e83032f9d95/classify/iterations/Iteration3/image',
-        'severity' : 'https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/ab4cf356-d250-44f4-9221-12c8560bbee1/classify/iterations/Iteration9/image',
-    }
+
+    config = PREDICTION_CONFIG[type]
 
     # API 호출 시, 사용할 헤더 셋팅
     headers = {
-        'Prediction-Key' : PREDICTION_KEY[type],
+        'Prediction-Key' : config['key'],
         # 바이너리 이미지 전송
         'Content-Type' : 'application/octec-stream'
     }
@@ -75,7 +92,7 @@ def predict_with_api(image_path, type='service_or_not') :
     byte_data = pil_to_binary(image_path)
 
     # API 호출
-    response = requests.post(ENDPOINT_URL[type], headers=headers, data=byte_data)
+    response = requests.post(config['url'], headers=headers, data=byte_data)
     predictions = response.json()['predictions']
 
     # 확률이 가장 높은 예측 항목 선택
@@ -262,6 +279,20 @@ def handle_upload(image_path):
 
 
 #──────────────────────────────────────────────────────────────
+# 선택한 태그 전체 삭제
+#──────────────────────────────────────────────────────────────
+def delete_tag_all(image_path):
+    image = Image.open(image_path)
+    # 이미지 자동 회전
+    transform_image = ImageOps.exif_transpose(image)
+    annotator_input = {
+        "image": transform_image,
+        "annotations": []
+    }
+    return annotator_input, image_path
+
+
+#──────────────────────────────────────────────────────────────
 # 사용자 vs AI 바운딩 박스 비교
 #──────────────────────────────────────────────────────────────
 def compare_boxes(user_data, ai_boxes):
@@ -381,22 +412,13 @@ def submit_form(school_name, image_path, tag_info) :
     # 초등학교명 입력값 유효성 검사
     if not school_name :
         error_msg = '초등학교를 선택해주세요.'
-        return gr.update(value=error_msg, visible=True), gr.update(visible=True)
+        return gr.update(value=error_msg, visible=True), gr.update(visible=True), gr.update(visible=True)
 
     # 이미지 저장
     image = Image.open(image_path)
     os.makedirs("saved_images", exist_ok=True)
     filename = f"saved_images/image_{np.random.randint(100000)}.jpg"
     image.save(filename)
-
-    # 입력 데이터 저장
-    # row = {
-    #     'school' : school_name,
-    #     'image' : filename,
-    #     'score' : score,
-    #     'lat' : lat,
-    #     'lon' : lon
-    # }
     
     row = {
         'school' : school_name,
@@ -413,70 +435,86 @@ def submit_form(school_name, image_path, tag_info) :
     
     result_msg = f"💾 저장 완료: {filename}"
  
-    return gr.update(value=result_msg, visible=False), gr.update(visible=False)
+    return gr.update(value=result_msg, visible=False), gr.update(value='', visible=True), *hide_components(1)
 
 
 #──────────────────────────────────────────────────────────────
 # 스쿨어택 데이터 가져오기
 #──────────────────────────────────────────────────────────────
 def get_school_attck_data() :
-    df = pd.read_csv('school_attack.csv')
+    csv_file = 'school_attack.csv'
 
-    # 태깅한 정보(문자열 형태 딕셔너리)를 딕셔너리로 변경
-    df['tag_info'] = df['tag_info'].apply(ast.literal_eval)
+    # 파일이 없으면 빈 DataFrame 반환
+    if not os.path.exists(csv_file):
+        return pd.DataFrame(columns=[
+            '학교명', '총 태그 갯수', '배수구 수', '살린 금액',
+            '요아정', '마라탕', '아이스크림'
+        ])
+    
+    try :
+        df = pd.read_csv('school_attack.csv')
 
-    # 총 태깅한 갯수 정보
-    df['total_tag'] = df['tag_info'].apply(lambda x: x.get('total_tag', 0))
+        # 태깅한 정보(문자열 형태 딕셔너리)를 딕셔너리로 변경
+        df['tag_info'] = df['tag_info'].apply(ast.literal_eval)
 
-    # 쓰레기 종류별 태깅한 갯수 정보
-    df['total_label_tag'] = df['tag_info'].apply(lambda x: x.get('total_label_tag', {}))
+        # 총 태깅한 갯수 정보
+        df['total_tag'] = df['tag_info'].apply(lambda x: x.get('total_tag', 0))
 
-    # 모든 라벨 추출
-    all_labels = set()
-    for label_dict in df['total_label_tag']:
-        all_labels.update(label_dict.keys())
+        # 쓰레기 종류별 태깅한 갯수 정보
+        df['total_label_tag'] = df['tag_info'].apply(lambda x: x.get('total_label_tag', {}))
 
-    # 쓰레기 종류별 컬럼 생성
-    for label in all_labels:
-        df[label] = df['total_label_tag'].apply(lambda x: x.get(label, 0))
+        # 모든 라벨 추출
+        all_labels = set()
+        for label_dict in df['total_label_tag']:
+            all_labels.update(label_dict.keys())
 
-    # 사용하지 않는 컬럼 삭제
-    df.drop(columns=['tag_info', 'total_label_tag'], inplace=True)
+        # 쓰레기 종류별 컬럼 생성
+        for label in all_labels:
+            df[label] = df['total_label_tag'].apply(lambda x: x.get(label, 0))
 
-    # 태깅 정보 합계
-    school_tag_info = df.groupby('school').sum(numeric_only=True).reset_index()
+        # 사용하지 않는 컬럼 삭제
+        df.drop(columns=['tag_info', 'total_label_tag'], inplace=True)
 
-    # 점검한 배수구 수 (학교수)
-    school_counts = df.groupby('school').size().reset_index(name='count')
+        # 태깅 정보 합계
+        school_tag_info = df.groupby('school').sum(numeric_only=True).reset_index()
 
-    # 모든 데이터 병합
-    df = pd.merge(school_tag_info, school_counts, on='school')
+        # 점검한 배수구 수 (학교수)
+        school_counts = df.groupby('school').size().reset_index(name='count')
 
-    # 컬럼명 변경
-    df = df.rename(columns={
-        'school' : '학교명',
-        'count': '배수구 수',
-        'total_tag': '총 태깅수'
-    })
+        # 모든 데이터 병합
+        df = pd.merge(school_tag_info, school_counts, on='school')
 
-    # 총 태깅 갯수가 많은 순, 그 다음 점검한 배수구 수가 많은 순 정렬
-    df = df.sort_values(by=['총 태깅수', '배수구 수'], ascending=[False, False])
+        # 컬럼명 변경
+        df = df.rename(columns={
+            'school' : '학교명',
+            'count': '배수구 수',
+            'total_tag': '총 태그 갯수'
+        })
 
-    # 살린 배수구 금액 추출
-    price = 10000
-    df['살린 금액'] = df['배수구 수'] * price
+        # 총 태깅 갯수가 많은 순, 그 다음 점검한 배수구 수가 많은 순 정렬
+        df = df.sort_values(by=['총 태그 갯수', '배수구 수'], ascending=[False, False]).reset_index(drop=True)
 
-    # 아이템별 단가
-    item_prices = {
-        '요아정': 4500,
-        '마라탕': 13000,
-        '아이스크림': 1500
-    }
+        # 살린 배수구 금액 추출
+        price = 10000
+        df['살린 금액'] = df['배수구 수'] * price
 
-    for items, price in item_prices.items():
-        df[items] = (df['살린 금액'] / price).astype(int)
+        # 아이템별 단가
+        item_prices = {
+            '요아정': 4500,
+            '마라탕': 13000,
+            '아이스크림': 1500
+        }
 
-    return df
+        for items, price in item_prices.items():
+            df[items] = (df['살린 금액'] / price).astype(int)
+
+        return df
+    
+    except Exception as e :
+        return pd.DataFrame(columns=[
+            '학교명', '총 태그 갯수', '배수구 수', '살린 금액',
+            '요아정', '마라탕', '아이스크림'
+        ])
 
 
 #──────────────────────────────────────────────────────────────
@@ -485,70 +523,136 @@ def get_school_attck_data() :
 def display_save_price() :
     df = get_school_attck_data()
 
-    cols = ['요아정', '마라탕', '아이스크림']
+    # 조회된 데이터가 없는 경우
+    if df.empty :
+        return '''
+        <div style="font-family: sans-serif; font-size: 16px; color: gray;">
+            ⚠️ 아직 저장된 데이터가 없습니다.
+        </div>
+        '''
+    
+    price = 10000
+    total = df['배수구 수'].sum()
+    total_price = total * price
 
-    # 살린 금액이 높은 순 정렬
-    df = df.sort_values(by='살린 금액', ascending=False).reset_index(drop=True)
-
-    # 최대값 및 컬럼명 추출
-    df['항목'] = df[cols].idxmax(axis=1)
-    df['항목 갯수'] = df[cols].max(axis=1)
-
-    school_df = df[['학교명', '살린 금액', '항목', '항목 갯수']]
+    # 항목별 금액
+    price_list = {
+        '요아정' : 4500,
+        '마라탕' : 13000,
+        '아이스크림' : 1500
+    }
 
     # 항목별 단위
-    unit_map = {
-        '아이스크림' : '개',
-        '마라탕': '그릇',
-        '닌텐도' : '대',
-        '치킨' : '마리'
+    units = {
+        '요아정': '개',
+        '마라탕' : '그릇',
+        '아이스크림' : '개'
     }
 
     # 아이콘
-    icon_map = {
-        '아이스크림' : '🍦',
+    icons = {
+        '요아정' : '🍨',
         '마라탕' : '🍲',
-        '닌텐도' : '🎮',
-        '치킨' : '🍗'
+        '아이스크림' : '🍦',
     }
 
-    # HTML 테이블 생성
-    table_rows = ''
-    for _, row in school_df.iterrows():
-        name = row['학교명']
-        item = row['항목']
-        price = row['살린 금액']
-        item_cnt = row['항목 갯수']
+    # 항목별 금액 환산 결과
+    item_lines = ''
+    for item, item_price in price_list.items() :
+        # 점검한 배수구 총 갯수
+        count = total_price // item_price
+        # 아이콘
+        icon = icons.get(item, '🎁')
+        # 단위
+        unit = units.get(item, '')
+        item_lines += f'<div>{icon} {item} <b>약 {count}{unit}</b></div>\n'
 
-        emoji = icon_map.get(item, '🎁')
-        unit = unit_map.get(item, '')
-
-        table_rows += f'''
-            <tr>
-                <td style="padding: 6px 0;">{name}</td>
-                <td style="padding: 6px 0;">{price} 원</b></td>
-                <td style="padding: 6px 0;">{emoji} {item} 약 <b>{item_cnt}{unit}</b></td>
-            </tr>
-        '''
-
-    # 전체 HTML 템플릿
+    # 전체 HTML 문자열
     html_output = f'''
-        <table style="width: 100%; font-size: 16px; border: none; border-collapse: collapse;">
-            <thead>
-                <tr>
-                <th style="text-align: left; padding-bottom: 8px;">학교명</th>
-                <th style="text-align: left; padding-bottom: 8px;">살린 금액</th>
-                <th style="text-align: left; padding-bottom: 8px;">아껴준 금액 환산 결과</th>
-                </tr>
-            </thead>
-            <tbody>
-                {table_rows}
-            </tbody>
-        </table>
+    <style>
+    .info-list {{
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        font-size: 16px;
+    }}
+
+    .info-item {{
+        list-style: none;
+        margin-bottom: 24px;
+        padding-bottom: 20px;
+    }}
+
+    .info-title {{
+        font-weight: bold;
+        margin-bottom: 6px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #ccc;
+    }}
+
+    .info-item > div:not(.info-title) {{
+        margin-top: 6px;
+    }}
+    </style>
+
+    <ul class="info-list">
+        <li class="info-item">
+            <div class="info-title">배수구 수</div>
+            <div>{total}개</div>
+        </li>
+        <li class="info-item">
+            <div class="info-title">총 금액</div>
+            <div>{total_price:,}원</div>
+        </li>
+        <li class="info-item">
+            <div class="info-title">아껴준 금액 환산 결과</div>
+            {item_lines}
+        </li>
+    </ul>
     '''
 
     return html_output
 
+
+#──────────────────────────────────────────────────────────────
+# 새로고침 시, 데이터 업데이트
+#──────────────────────────────────────────────────────────────
+def refresh_school_attck() :
+    # 차트 그릴 데이터 가져오기
+    df = get_school_attck_data()
+
+    # 조회된 데이터가 없는 경우
+    if df.empty :
+        html =  '''
+        <div style="font-family: sans-serif; font-size: 16px; color: gray;">
+            ⚠️ 아직 저장된 데이터가 없습니다.
+        </div>
+        '''
+        return gr.BarPlot(), html
+
+    
+    top_10_df = df.head(10)
+
+    # 컬러맵 지정
+    medals = ['#d4af37', '#c0c0c0', '#cd7f32']
+    default_color = "#a9a9a9"
+    color_map = {
+        row['학교명'] : medals[i] if i < 3 else default_color
+        for i, row in top_10_df.iterrows()
+    }
+
+    barplot = gr.BarPlot(
+        top_10_df,
+        x='학교명',
+        y='총 태그 갯수',
+        title='우리가 찾은 쓰레기 갯수',
+        color='학교명',
+        color_map=color_map,
+        tooltip='axis'
+    )
+
+    return barplot, display_save_price()
+    
 
 #──────────────────────────────────────────────────────────────
 # Gradio UI
@@ -573,14 +677,23 @@ with gr.Blocks() as demo :
             temp_save_result = gr.State()
 
             # 사용자 vs AI 이미지 비교
+            notice = gr.Markdown('#### 태그 가능 항목 : 담배꽁초, 종이, 재활용, 낙엽', visible=False)
             with gr.Row(visible=False) as detect :
                 ai_result = gr.Image(label="🤖 AI 감지 결과")
                 annotator = image_annotator(
                     label='이미지 업로드',
-                    label_list=['아래 항목에서 선택하세요.(선택X)', '담배꽁초', '종이', '재활용', '낙엽'],
-                    label_colors=[(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]
+                    label_list=['담배꽁초', '종이', '재활용', '낙엽'],
+                    label_colors=[(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]
                 )
+            delete_btn = gr.Button('선택한 태그 전체 삭제', visible=False)
             compare_btn = gr.Button("📐 비교", visible=False)
+
+            # 삭제 버튼 클릭 시, image_annotator 에 이미지 다시 로딩
+            delete_btn.click(
+                fn=delete_tag_all,
+                inputs=image_path,
+                outputs=[annotator, image_path]
+            )
             
             # AI 감지 및 태깅
             detect_btn.click(
@@ -590,9 +703,9 @@ with gr.Blocks() as demo :
             )
 
             detect_btn.click(
-                fn=lambda: (gr.update(visible=True),)*2,
+                fn=lambda: show_components(detect, compare_btn, delete_btn, notice),
                 inputs=None,
-                outputs=[detect, compare_btn]
+                outputs=[detect, compare_btn, delete_btn, notice]
             )
 
             # 비교 결과 노출
@@ -610,7 +723,7 @@ with gr.Blocks() as demo :
             )
 
             compare_btn.click(
-                fn=lambda: (gr.update(visible=True),)*3,
+                fn=lambda: show_components(compare, save_btn, report_btn),
                 inputs=None,
                 outputs=[compare, save_btn, report_btn]
             )
@@ -634,34 +747,33 @@ with gr.Blocks() as demo :
             submit_btn.click(
                 fn=submit_form,
                 inputs=[school_input, image_path, temp_save_result],
-                outputs=[modal_alert, school_form]
+                outputs=[modal_alert, school_input, school_form]
             )
 
             # 이미지 업로드
             image_input.change(
                 fn=process_image,
                 inputs=image_input,
-                outputs=[validation, prediction, report_btn, detect_btn, detect, compare_btn, compare, save_btn, school_form]
+                outputs=[validation, prediction, report_btn, detect_btn, notice, detect, delete_btn, compare_btn, compare, save_btn, school_form]
             )
-
-        # 스쿨어택
+        # 저장한 데이터 시각화
         with gr.Tab('📊') :
+            # 새로고침
+            refresh_btn = gr.Button('🔄 새로고침')
+
+            # 스쿨어택
             gr.Markdown("## 🏫 스쿨어택")
-
-            df = get_school_attck_data()
+            barplot_output = gr.BarPlot()
             
-            compatition = gr.BarPlot(
-                df,
-                x='학교명',
-                y='총 태깅수',
-                x_title='학교',
-                y_title='우리가 찾은 쓰레기 갯수',
-                color='총 태깅수',
-                tooltip='none',
-            )
-
+            # 우리가 살린 배수구
             gr.Markdown('## 💸 우리가 살린 배수구')
-            gr.HTML(value=display_save_price())
+            html_output = gr.HTML(value=display_save_price())
 
+            # 새로고침 시, 데이터 업데이트
+            refresh_btn.click(
+                fn=refresh_school_attck,
+                inputs=None,
+                outputs=[barplot_output, html_output]
+            )
 
 demo.launch()
