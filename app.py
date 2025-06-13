@@ -17,6 +17,7 @@ from azure.cognitiveservices.vision.customvision.prediction import CustomVisionP
 from msrest.authentication import ApiKeyCredentials
 import altair as alt
 import matplotlib.pyplot as plt
+import time
 
 #──────────────────────────────────────────────────────────────
 # 이미지 처리
@@ -91,8 +92,7 @@ def predict_with_api(image_path, type='service_or_not') :
 # PIL 이미지 객체 -> JPEG 형식의 바이너리 데이터로 변환
 #──────────────────────────────────────────────────────────────
 def pil_to_binary(image_path) :
-    image = Image.open(image_path)
-    image = ImageOps.exif_transpose(image)  # ✅ 자동 회전 추가
+    image = Image.open(image_path)  
     buf = io.BytesIO()
     image.save(buf, format='JPEG')
     byte_data = buf.getvalue()
@@ -272,8 +272,8 @@ def handle_upload(image_path):
 
     # ✅ image_annotator에 넘길 numpy 배열 사용
     annotator_input = {
-        "image": transform_image,
-        "annotations": []
+    "image": transform_image,  # PIL Image 객체 또는 base64/np.array 가능
+    "annotations": []
     }
 
     return ai_img, annotator_input, ai_boxes, image_path
@@ -634,43 +634,39 @@ def get_ranked_chart(df):
     return chart
 
 #──────────────────────────────────────────────────────────────
-# 마지막 태그 초기화 
+# 전체 태그 삭제
 #──────────────────────────────────────────────────────────────
-def remove_last_user_tag(user_data):
-    if not user_data:
-        return user_data
+def reset_boxes(img_path):
+    img = Image.open(img_path)
+    img_np = np.array(img)
+    return {"image": img_np, "annotations": [], "boxes": []}
 
-    annotations = user_data.get("annotations")
-    if isinstance(annotations, list) and len(annotations) > 0:
-        annotations = annotations[:-1]  # 새 리스트로 잘라서 반환
+#──────────────────────────────────────────────────────────────
+# 마지막 태그 삭제
+#──────────────────────────────────────────────────────────────
+def remove_last_box(data, img_path):
+    if not isinstance(data, dict):
+        return gr.update()
 
-    return {
-        "image": user_data.get("image", None),
-        "annotations": annotations if annotations else [],
-        "boxes": user_data.get("boxes", [])
-    }
-#──────────────────────────────────────────────────────────────
-# 전체 초기화 
-#──────────────────────────────────────────────────────────────
-def reset_user_tag_data(user_data):
-    if not user_data:
-        return user_data
-    return {
-        "image": user_data.get("image", None),
-        "annotations": [],               # 태그 비우기
-        "boxes": user_data.get("boxes", [])  # AI 감지 결과 유지
-    }
+    ann = data.get("annotations", [])
+    boxes = data.get("boxes", [])
     
+    return {
+        "image": img_path,  
+        "annotations": ann[1:],
+        "boxes": boxes[1:]
+    }
+
 #──────────────────────────────────────────────────────────────
 # Gradio UI
 #──────────────────────────────────────────────────────────────
 with gr.Blocks() as demo :
     gr.Markdown('## 🚧 격자형 빗물받이에 특화된 시범 서비스입니다.')
 
-    with gr.Tabs() :
-        # 개체 감지 (담배꽁초) 탭
-        with gr.Tab('🔎') :
+    with gr.Tabs():
+        with gr.Tab('🔎'):
             gr.Markdown("## 🧪 담배꽁초 감지 비교 (사용자 vs AI)")
+
             gr.HTML("""
             <style>
             .annotator-toolbar, .gradio-image-annotator-toolbar {
@@ -679,57 +675,61 @@ with gr.Blocks() as demo :
             }
             </style>
             """)
-            # 이미지 메타정보를 사용하기 위해서 type='filepath' 로 지정
+
             image_input = gr.Image(type='filepath', label='사진을 올려주세요.')
             validation = gr.Textbox(label='이미지 확인')
             prediction = gr.Textbox(label='오염 심각도 확인', visible=False)
             detect_btn = gr.Button('🟦 AI 감지 및 태깅 시작', visible=False)
 
-            # global 변수
             temp_ai_result = gr.State()
             image_path = gr.State()
             temp_save_result = gr.State()
 
-            # 사용자 vs AI 이미지 비교
-            with gr.Row(visible=False) as detect :
+            # 사용자 vs AI 비교 Row
+            with gr.Row(visible=False) as detect:
                 with gr.Column(scale=1):
                     ai_result = gr.Image(label="🤖 AI 감지 결과")
+
                 with gr.Column(scale=1):
                     annotator = image_annotator(
-                    label='이미지 업로드',
-                    label_list=['아래 항목에서 선택하세요.(선택X)', '담배꽁초', '종이', '재활용', '낙엽'],
-                    label_colors=[(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]
+                        label='이미지 업로드',
+                        label_list=['아래 항목에서 선택하세요.(선택X)', '담배꽁초', '종이', '재활용', '낙엽'],
+                        label_colors=[(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]
                     )
-                    with gr.Row():
-                        clear_btn = gr.Button("❌ 태그 초기화")
-                        remove_last_btn = gr.Button("⛔ 마지막 태그 삭제")
 
-                        clear_btn.click(
-                        fn=reset_user_tag_data,
-                        inputs=[annotator],
-                        outputs=[annotator]
-                        )
+                    with gr.Row(visible=True) as button_row:
+                        clear_btn = gr.Button("❌ 전체 태그 삭제")
+                        remove_btn = gr.Button("⛔ 마지막 태그 삭제")
 
-                        remove_last_btn.click(
-                        fn=remove_last_user_tag,
-                        inputs=[annotator],
-                        outputs=[annotator]
-                        )
-            compare_btn = gr.Button("📐 비교", visible=False)
             
-            # AI 감지 및 태깅
+            clear_btn.click(
+                fn=reset_boxes,
+                inputs=[image_path],
+                outputs=[annotator]
+            )
+
+            remove_btn.click(
+                fn=remove_last_box,
+                inputs=[annotator, image_path],
+                outputs=[annotator]
+            )
+
+            compare_btn = gr.Button("📐 비교", visible=False)
+
+            # AI 감지 클릭 시
             detect_btn.click(
                 fn=handle_upload,
                 inputs=image_input,
                 outputs=[ai_result, annotator, temp_ai_result, image_path]
             )
 
+            # 감지 이후 모든 구성 요소 보이기
             detect_btn.click(
-                fn=lambda: (gr.update(visible=True),)*2,
+                fn=lambda: (gr.update(visible=True),)*4,
                 inputs=None,
-                outputs=[detect, compare_btn]
+                outputs=[detect, compare_btn, clear_btn, remove_btn]
             )
-
+            
             # 비교 결과 노출
             with gr.Row(visible=False) as compare :
                 compare_result = gr.Image(label="📊 사용자 vs AI 비교 결과")
