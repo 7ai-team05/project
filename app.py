@@ -634,21 +634,33 @@ def get_ranked_chart(df):
     return chart
 
 #──────────────────────────────────────────────────────────────
-# remove button
+# 마지막 태그 초기화 
 #──────────────────────────────────────────────────────────────
 def remove_last_user_tag(user_data):
     if not user_data:
         return user_data
 
-    annotations = user_data.get("annotations", [])
-    if len(annotations) > 0:
-        annotations.pop()  # 마지막 하나 제거
+    annotations = user_data.get("annotations")
+    if isinstance(annotations, list) and len(annotations) > 0:
+        annotations = annotations[:-1]  # 새 리스트로 잘라서 반환
 
     return {
-        "image": user_data["image"],
-        "annotations": annotations,
-        "boxes": user_data.get("boxes", [])  # AI 감지 결과는 유지
+        "image": user_data.get("image", None),
+        "annotations": annotations if annotations else [],
+        "boxes": user_data.get("boxes", [])
     }
+#──────────────────────────────────────────────────────────────
+# 전체 초기화 
+#──────────────────────────────────────────────────────────────
+def reset_user_tag_data(user_data):
+    if not user_data:
+        return user_data
+    return {
+        "image": user_data.get("image", None),
+        "annotations": [],               # 태그 비우기
+        "boxes": user_data.get("boxes", [])  # AI 감지 결과 유지
+    }
+    
 #──────────────────────────────────────────────────────────────
 # Gradio UI
 #──────────────────────────────────────────────────────────────
@@ -690,17 +702,18 @@ with gr.Blocks() as demo :
                     )
                     with gr.Row():
                         clear_btn = gr.Button("❌ 태그 초기화")
-                        clear_btn.click(
-                            fn=lambda img: {"image": img, "annotations": [], "boxes": []},
-                            inputs=[image_input],  # 또는 image_path 등 실제 이미지 경로 변수
-                            outputs=[annotator]
-                        )
                         remove_last_btn = gr.Button("⛔ 마지막 태그 삭제")
 
+                        clear_btn.click(
+                        fn=reset_user_tag_data,
+                        inputs=[annotator],
+                        outputs=[annotator]
+                        )
+
                         remove_last_btn.click(
-                            fn=remove_last_user_tag,
-                            inputs=[annotator],
-                            outputs=[annotator]
+                        fn=remove_last_user_tag,
+                        inputs=[annotator],
+                        outputs=[annotator]
                         )
             compare_btn = gr.Button("📐 비교", visible=False)
             
