@@ -1,5 +1,4 @@
 import gradio as gr
-import folium
 import io
 import os
 import requests
@@ -11,7 +10,6 @@ import pandas as pd
 import altair as alt
 from collections import Counter
 from PIL import Image, ImageDraw, ImageOps
-from gradio_modal import Modal
 from gradio_image_annotation import image_annotator
 from PIL.ExifTags import TAGS
 from azure.cognitiveservices.vision.customvision.prediction import CustomVisionPredictionClient
@@ -41,7 +39,7 @@ def process_image(image_path) :
     # 이미지 빗물받이 여부 판단
     service_or_not_label = predict_with_api(image_path)
     is_valid = service_or_not_label == 'service'
-    validation_msg = f'✅이건 와플모양 배수구야!' if is_valid else '🚫이건 와플모양 배수구가 아니야! 다시 올려줘'
+    validation_msg = f'✅이건 와플모양 배수구야!' if is_valid else '🚫이건 와플모양 배수구가 아니야! 다시 올려줘!'
 
     # 빗물받이가 아닌 경우,
     if not is_valid :
@@ -49,7 +47,7 @@ def process_image(image_path) :
     
     # 빗물받이인 경우, 오염도 예측    
     severity_label = predict_with_api(image_path, 'severity')
-    is_clean = severity_label == 'clean'
+    is_clean = severity_label == 'Clean'
     result_msg = f'🟢 깨끗해! 다른 배수구도 확인해볼래?' if is_clean else f'🟡 더러워! 커비랑 같이 얼마나 더러운지 확인해볼까?'
 
     return validation_msg, gr.update(value=result_msg, visible=True), *hide_components(1), gr.update(visible=False) if is_clean else gr.update(visible=True), *hide_components(7)
@@ -206,7 +204,7 @@ def detect_with_boxes(image_path):
     
     # Custom Vision API 설정
     PREDICTION_KEY = "BBvYKDdr5RDpSMjG34Z2XXw3hLxzlAQkktCPXwHTLleSagQPHGg0JQQJ99BEACYeBjFXJ3w3AAAIACOGH9bC"
-    ENDPOINT_URL = "https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/e81e8daf-2a54-4f41-9c8f-581d45e49ee9/detect/iterations/Iteration1/image"
+    ENDPOINT_URL = "https://7aiteam05cv-prediction.cognitiveservices.azure.com/customvision/v3.0/Prediction/dc9b7548-3652-414a-b403-b567739785e1/detect/iterations/Iteration6/image"
 
     headers = {
         "Prediction-Key": PREDICTION_KEY,
@@ -224,7 +222,7 @@ def detect_with_boxes(image_path):
     draw = ImageDraw.Draw(image_with_boxes)
  
     for pred in results["predictions"]:
-        if pred["probability"] > 0.5:
+        if pred["probability"] > 0.8 :
             w, h = image.width, image.height
             box = pred["boundingBox"]
             left = int(box["left"] * w)
@@ -270,7 +268,7 @@ def handle_upload(image_path):
 #──────────────────────────────────────────────────────────────
 def compare_boxes(user_data, ai_boxes):
     if not user_data or "boxes" not in user_data:
-        return "❌ 네가 찾은 쓰레기가 없어! 쓰레기 찾는걸 도와줄래?", None, []
+        return "❌ 네가 찾은 쓰레기가 없어! 커비랑 같이 숨은 쓰레기를 찾아볼래?", None, []
  
     img_array = user_data["image"]
     user_boxes = user_data["boxes"]
@@ -525,7 +523,7 @@ def get_ranked_chart(df) :
         return alt.Chart(pd.DataFrame()).mark_point().encode()
     
     # 총 태깅수 기준으로 내림차순 정렬
-    df = df.sort_values(by='총 태그 갯수', ascending=False).reset_index(drop=True).head(5)
+    df = df.sort_values(by='총 태그 갯수', ascending=False).reset_index(drop=True).head(3)
 
     # 순위 부여
     df['순위'] = ''
@@ -547,11 +545,11 @@ def get_ranked_chart(df) :
     # 막대 차트 (세로 막대그래프)
     bar = alt.Chart(df).mark_bar().encode(
         x=alt.X('학교명:N', sort=school_order, title='학교'),
-        y=alt.Y('총 태그 갯수:Q', axis=alt.Axis(title='총 태그 갯수', titleAngle=0)),
+        y=alt.Y('총 태그 갯수:Q', axis=alt.Axis(title='총 태그 갯수', titleAngle=0, titlePadding=50)),
         color=alt.Color('color:N', scale=None, legend=None),
         tooltip=['학교명', '총 태그 갯수'],
     ).properties(
-        title='커비와 함께 쓰레기를 많이 찾은 학교 Top5'
+        title='커비와 함께 쓰레기를 많이 찾은 학교 Top3'
     )
 
     # 이모지 텍스트
@@ -569,7 +567,7 @@ def get_ranked_chart(df) :
 
     # 전체 차트 구성
     chart = (bar + text).properties(
-        width=100 * len(df),  # 반응형 너비
+        width={'step': 120}
     ).configure_axis(
         labelFontSize=14,
         titleFontSize=16,
@@ -712,20 +710,23 @@ def refresh_school_attck() :
 
     # 조회된 데이터가 있는 경우
     return get_ranked_chart(df), display_save_price()
-    
+
 
 #──────────────────────────────────────────────────────────────
 # Gradio UI
 #──────────────────────────────────────────────────────────────
 with gr.Blocks() as demo :
     gr.Markdown('## 💧비추다 with 스쿨어택')
-    gr.Markdown('우리의 AI 커비를 도와 빗물받이에 있는 쓰레기를 찾고 제일 잘 도와준 학교를 가려보자!')
+    gr.Markdown('우리의 🤖 AI 커비를 도와 빗물받이에 있는 쓰레기를 찾고 제일 잘 도와준 학교를 가려보자!')
 
     with gr.Tabs() :
         # 개체 감지 (담배꽁초) 탭
         with gr.Tab('🔍 숨은 쓰레기 찾기') :
             # 이미지 메타정보를 사용하기 위해서 type='filepath' 로 지정
-            gr.Markdown('#### 📸 와플 모양 배수구 사진만 올려줘!')
+            gr.Markdown('''
+                #### 📸 와플 모양 배수구 사진만 올려줘!
+                🔒 업로드된 이미지는 태깅 기반 분석에만 활용되며, 서버에 1개월간 안전하게 저장된 후 자동으로 삭제됩니다.
+                ''')
             image_input = gr.Image(type='filepath', label='사진을 올려줘')
             validation = gr.Textbox(label='네가 찍은 사진')
             prediction = gr.Textbox(label='네가 찍어준 배수구', visible=False)
@@ -738,7 +739,7 @@ with gr.Blocks() as demo :
 
             # 사용자 vs AI 이미지 비교
             notice = gr.Markdown('''
-                        #### 📢 커비는 담배를 찾았어!
+                        #### 📢 커비는 담배꽁초를 찾았어!
                         커비가 못 찾은 쓰레기를 같이 찾아볼래? <b>담배꽁초, 낙엽, 기타 쓰레기를 찾아줘!</b>
                         ''', visible=False)
             with gr.Row(visible=False) as detect :
@@ -749,6 +750,7 @@ with gr.Blocks() as demo :
                     label_colors=[(255, 0, 0), (0, 255, 0), (0, 0, 255)]
                 )
 
+            # 태그 제거 버튼
             with gr.Row(visible=False) as button_row :
                 clear_btn = gr.Button("❌ 태그한거 전부 지울래")
                 remove_btn = gr.Button("⛔ 마지막 태그만 지울래")
@@ -795,7 +797,7 @@ with gr.Blocks() as demo :
             with gr.Row(visible=False) as school_form :
                 school_input = gr.Dropdown(choices=school_names, label='초등학교 선택', value=None)
                 modal_alert = gr.Textbox(visible=False, label='알림')
-                submit_btn = gr.Button('우리 학교 점수 올리기')
+                submit_btn = gr.Button('📈 우리 학교 점수 올리기')
 
             report_btn = gr.HTML('''
                             <a href="https://www.safetyreport.go.kr" target="_blank" style="display: block; border-radius: 6px; padding: 15px; background: #033075; color: white; font-weight: bold; text-align: center; text-decoration: none;">
@@ -846,9 +848,11 @@ with gr.Blocks() as demo :
 
             df = get_school_attck_data()
             df['학교명'] = df['학교명'].astype(str).str.replace(r'\s+', '', regex=True)
-            
             with gr.Row() :
-                plot = gr.Plot(get_ranked_chart(df), show_label=False)
+                plot = gr.Plot(
+                    get_ranked_chart(df),
+                    show_label=False
+                )
             gr.HTML("<div style='height: 40px;'></div>")
 
             # 우리가 살린 배수구
@@ -865,28 +869,28 @@ with gr.Blocks() as demo :
         # 맨 위로 이동
         scroll_button = gr.HTML(''' 
             <style>
-            #scrollToTop {
-                position: fixed;
-                bottom: 40px;
-                right: 40px;
-                z-index: 9999;
-                background-color: #fed7aa;
-                color: #ea580c;
-                width: 48px;
-                height: 48px;
-                border: none;
-                border-radius: 50%;
-                font-size: 30px;
-                font-weight: bold;
-                cursor: pointer;
-                box-shadow: 0px 2px 6px rgba(0,0,0,0.3);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
+                #scrollToTop {
+                    position: fixed;
+                    bottom: 40px;
+                    right: 40px;
+                    z-index: 9999;
+                    background-color: #fed7aa;
+                    color: #ea580c;
+                    width: 48px;
+                    height: 48px;
+                    border: none;
+                    border-radius: 50%;
+                    font-size: 30px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    box-shadow: 0px 2px 6px rgba(0,0,0,0.3);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
             </style>
 
             <button id="scrollToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'});">↑</button>
             ''')
 
-demo.launch()
+demo.launch(share=True)
