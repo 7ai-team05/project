@@ -395,9 +395,14 @@ def get_school_list() :
         json_data = json.load(f)
     school_names = [record['학교명'] for record in json_data['records'] if record['학교급구분'] == '초등학교']
 
-    locale.setlocale(locale.LC_COLLATE, 'ko_KR.UTF-8')
-    return sorted(school_names, key=locale.strxfrm)
-
+    # 한국어 로케일을 시도, 실패하면 기본 정렬 사용
+    try:
+        locale.setlocale(locale.LC_COLLATE, 'ko_KR.UTF-8')
+        return sorted(school_names, key=locale.strxfrm)
+    except locale.Error:
+        # 한국어 로케일이 없으면 Python 기본 정렬 사용
+        return sorted(school_names)
+    
 #──────────────────────────────────────────────────────────────
 # 결과 저장
 #──────────────────────────────────────────────────────────────
@@ -893,4 +898,4 @@ with gr.Blocks() as demo :
             <button id="scrollToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'});">↑</button>
             ''')
 
-demo.launch(share=True)
+demo.launch()
