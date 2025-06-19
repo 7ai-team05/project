@@ -129,4 +129,4 @@ Gradio 기반의 웹 서비스를 통해 AI 모델 분석, 사용자 참여, 데
 
 ## 서비스
 * Hugging Face Space [https://eunalee-project1.hf.space/](https://eunalee-project1.hf.space/)  
-* 데모 영상 [https://your-demo-link.com](https://your-demo-link.com)
+* 데모 영상 [https://youtube.com/shorts/_hGPIeySCuQ?si=vcjfn0Sc8wiyO_Cf](https://youtube.com/shorts/_hGPIeySCuQ?si=vcjfn0Sc8wiyO_Cf)
